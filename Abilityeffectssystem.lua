@@ -31,9 +31,9 @@ local RunService = game:GetService("RunService")
 -- Wait for dependencies to load
 task.wait(0.5)
 
---============================================
+
 -- AUDIO HELPER FUNCTION
---============================================
+
 
 --[[
     Creates and plays a 3D positional sound with configurable parameters
@@ -66,9 +66,9 @@ local function playAbilitySound(parent, soundId, volume, playbackSpeed, looped)
     return sound
 end
 
---============================================
+
 -- REMOTE EVENTS SETUP
---============================================
+
 
 -- Get or create remotes folder
 local BirdRemotes = ReplicatedStorage:WaitForChild("BirdRemotes", 10)
@@ -106,9 +106,9 @@ local FlightSlowUpdateRemote = getOrCreateRemote("FlightSlowUpdate")
 local FlightSpeedUpdateRemote = getOrCreateRemote("FlightSpeedUpdate")
 local StopFlightRemote = getOrCreateRemote("StopFlight")
 
---============================================
+
 -- PLAYER BUFF TRACKING SYSTEM
---============================================
+ 
 
 -- Stores active buffs/debuffs for each player
 local PlayerBuffs = {}
@@ -134,9 +134,9 @@ local function getPlayerBuffs(player)
     return PlayerBuffs[player]
 end
 
---============================================
+ 
 -- FLIGHT SLOW SYSTEM
---============================================
+ 
 
 --[[
     Tracks slow multipliers for flying players
@@ -201,9 +201,9 @@ _G.SetFlightSlow = setFlightSlow
 _G.RemoveFlightSlow = removeFlightSlow
 _G.FlightSlowPlayers = FlightSlowPlayers
 
---============================================
+ 
 -- FLIGHT SPEED BUFF SYSTEM
---============================================
+ 
 
 -- Tracks speed multipliers for flying players
 local FlightSpeedBuffs = {}
@@ -251,9 +251,9 @@ _G.SetFlightSpeedBuff = function(player, multiplier, duration)
     end
 end
 
---============================================
+ 
 -- HELPER FUNCTIONS
---============================================
+ 
 
 --[[
     Finds all enemy players within radius of a position
@@ -544,9 +544,9 @@ local function createLightningEffect(startPos, endPos, color)
     return bolt
 end
 
---============================================
+ 
 -- INVULNERABILITY SYSTEM
---============================================
+ 
 
 --[[
     Applies temporary invulnerability to player
@@ -581,9 +581,9 @@ _G.RemoveInvulnerability = function(player)
     if buffs then buffs.invulnerable = false end
 end
 
---============================================
+ 
 -- SHIELD SYSTEM
---============================================
+ 
 
 --[[
     Applies damage-absorbing shield to player
@@ -665,18 +665,18 @@ _G.CheckShield = function(player, incomingDamage)
     return incomingDamage
 end
 
---============================================
+ 
 -- GLOBAL EXPORTS FOR COMBAT INTEGRATION
---============================================
+ 
 
 _G.GetEnemiesInRadius = getEnemiesInRadius
 _G.GetAllEnemies = getAllEnemies
 _G.DealDamage = dealDamage
 _G.HealPlayer = healPlayer
 
---============================================
+ 
 -- DECOY CLONE SYSTEM
---============================================
+ 
 
 -- Tracks active clones for damage routing
 local ActiveClones = {}
@@ -731,15 +731,15 @@ _G.IsClone = function(character)
     return ActiveClones[character] ~= nil
 end
 
---============================================
+ 
 -- ABILITY IMPLEMENTATIONS
---============================================
+ 
 
---============================================
+ 
 -- QUICK DASH
 -- High-speed dash with invulnerability frames
 -- Works both on ground and in flight
---============================================
+ 
 _G.ExecuteQuickDash = function(player, dashSpeed, dashDistance)
     local char = player.Character
     if not char then return end
@@ -797,10 +797,10 @@ _G.ExecuteQuickDash = function(player, dashSpeed, dashDistance)
     Debris:AddItem(attachment2, dashDuration + 0.5)
 end
 
---============================================
+ 
 -- HEAL PULSE
 -- Instant self-heal ability
---============================================
+ 
 _G.ExecuteHealPulse = function(player, healAmount)
     local char = player.Character
     if not char then return end
@@ -813,11 +813,11 @@ _G.ExecuteHealPulse = function(player, healAmount)
     createEffect(root.Position, Color3.fromRGB(50, 255, 100), 4, 0.5)
 end
 
---============================================
+ 
 -- SPEED BOOST
 -- Temporary movement speed increase
 -- Affects both ground and flight speed
---============================================
+ 
 _G.ApplySpeedBoost = function(player, multiplier, duration)
     local char = player.Character
     if not char then return end
@@ -844,10 +844,10 @@ _G.ApplySpeedBoost = function(player, multiplier, duration)
     end)
 end
 
---============================================
+ 
 -- SHADOW FEATHERS (Invisibility)
 -- Grants temporary invisibility with invulnerability
---============================================
+ 
 _G.ApplyInvisibility = function(player, duration, breakOnAttack)
     local char = player.Character
     if not char then return end
@@ -897,10 +897,10 @@ _G.ApplyInvisibility = function(player, duration, breakOnAttack)
     end)
 end
 
---============================================
+ 
 -- VAMPIRIC TALONS (Lifesteal)
 -- Grants temporary lifesteal on attacks
---============================================
+ 
 _G.ApplyLifesteal = function(player, percent, duration)
     local buffs = getPlayerBuffs(player)
     buffs.lifesteal = percent
@@ -931,11 +931,11 @@ _G.GetLifestealAmount = function(player, damageDealt)
     return 0
 end
 
---============================================
+ 
 -- THERMAL LIFT
 -- Launches player upward with optional damage
 -- Works both on ground and in flight
---============================================
+ 
 _G.ExecuteThermalLift = function(player, launchForce, damage, damageRadius)
     local char = player.Character
     if not char then return end
@@ -966,10 +966,10 @@ _G.ExecuteThermalLift = function(player, launchForce, damage, damageRadius)
     end
 end
 
---============================================
+ 
 -- SONIC SCREECH
 -- Area stun around player
---============================================
+ 
 _G.ExecuteSonicScreech = function(player, radius, stunDuration, damage)
     local char = player.Character
     if not char then return end
@@ -987,10 +987,10 @@ _G.ExecuteSonicScreech = function(player, radius, stunDuration, damage)
     end
 end
 
---============================================
+ 
 -- METEOR DIVE
 -- Ground slam with knockback physics
---============================================
+ 
 _G.ExecuteMeteorDive = function(player, damage, radius, stunDuration)
     local char = player.Character
     if not char then return end
@@ -1018,11 +1018,11 @@ _G.ExecuteMeteorDive = function(player, damage, radius, stunDuration)
     end
 end
 
---============================================
+ 
 -- TIME FREEZE (Area Slow)
 -- Creates persistent slow zone
 -- Affects both ground and flight movement
---============================================
+ 
 _G.ApplyAreaSlow = function(player, position, radius, slowPercent, duration)
     local char = player.Character
     if char then
@@ -1144,10 +1144,10 @@ _G.ApplyAreaSlow = function(player, position, radius, slowPercent, duration)
     end)
 end
 
---============================================
+ 
 -- DECOY CLONE
 -- Creates attackable clone that explodes on death
---============================================
+ 
 _G.CreateDecoyClone = function(player, cloneDuration, cloneHP, explosionDamage)
     local char = player.Character
     if not char then return end
@@ -1221,10 +1221,10 @@ _G.CreateDecoyClone = function(player, cloneDuration, cloneHP, explosionDamage)
     end)
 end
 
---============================================
+ 
 -- EAGLE EYE
 -- Marks all enemies and increases damage to them
---============================================
+ 
 _G.ExecuteEagleEye = function(player, duration, damageAmplify)
     local char = player.Character
     local playerRoot = char and char:FindFirstChild("HumanoidRootPart")
@@ -1264,11 +1264,11 @@ _G.ExecuteEagleEye = function(player, duration, damageAmplify)
     end
 end
 
---============================================
+ 
 -- GRAVITY WELL
 -- Creates pull zone that slows and damages enemies
 -- Affects both ground and flight movement
---============================================
+ 
 _G.CreateGravityWell = function(player, position, radius, pullForce, damagePerSecond, duration)
     local effectsFolder = Instance.new("Folder")
     effectsFolder.Name = "GravityWellEffects"
@@ -1396,11 +1396,11 @@ _G.CreateGravityWell = function(player, position, radius, pullForce, damagePerSe
     end)
 end
 
---============================================
+ 
 -- DIVINE WINGS
 -- Ultimate ability with speed boost, invulnerability, and contact damage
 -- Affects both ground and flight speed
---============================================
+ 
 _G.ExecuteDivineWings = function(player, duration, speedBoost, contactDamage)
     local char = player.Character
     if not char then return end
@@ -1467,10 +1467,10 @@ _G.ExecuteDivineWings = function(player, duration, speedBoost, contactDamage)
     end)
 end
 
---============================================
+ 
 -- STORM EMPEROR
 -- Map-wide lightning strikes on all enemies
---============================================
+ 
 _G.ExecuteStormEmperor = function(player, damage, stunDuration)
     local char = player.Character
     local playerRoot = char and char:FindFirstChild("HumanoidRootPart")
@@ -1514,9 +1514,9 @@ _G.ExecuteStormEmperor = function(player, damage, stunDuration)
     end
 end
 
---============================================
+ 
 -- COMBAT SYSTEM INTEGRATION
---============================================
+ 
 
 -- Check if player has invulnerability buff
 _G.IsPlayerInvulnerable = function(player)
