@@ -30,9 +30,9 @@ local AnalyticsService = game:GetService("AnalyticsService")
 -- Configure respawn time at service level
 Players.RespawnTime = 5
 
---============================================
+
 -- CONFIGURATION CONSTANTS
---============================================
+
 
 -- Spawn protection durations (in seconds)
 local SPAWN_PROTECTION = {
@@ -50,9 +50,9 @@ local SOUNDS = {
     ICICLE_HIT = "rbxassetid://98429772907900",
 }
 
---============================================
+
 -- GAME MODE STATE
---============================================
+
 
 -- Global flags accessible by other scripts for mode detection
 _G.FreeForAllActive = false
@@ -71,9 +71,9 @@ local function logFunnelStep(player, step, stepName)
     end)
 end
 
---============================================
+
 -- AUDIO SYSTEM
---============================================
+
 
 --[[
     Creates and plays a 3D positional sound at a character's location
@@ -102,9 +102,9 @@ local function playWorldSound(character, soundId, volume, maxDistance)
     Debris:AddItem(sound, 10)
 end
 
---============================================
+
 -- REMOTE EVENTS SETUP
---============================================
+
 
 -- Create folder structure for organized remote events
 local BirdRemotes = Instance.new("Folder")
@@ -204,9 +204,9 @@ task.spawn(function()
     EggRemotes = ReplicatedStorage:WaitForChild("EggGameRemotes", 10)
 end)
 
---============================================
+
 -- BIRD TYPE DEFINITIONS
---============================================
+
 
 --[[
     Each bird type has unique stats affecting gameplay:
@@ -298,9 +298,9 @@ local BIRD_TYPES = {
     },
 }
 
---============================================
+
 -- BIRD MORPH SYSTEM
---============================================
+
 
 -- Cache for loaded bird models from ServerStorage
 local BIRD_MODELS = {
@@ -346,9 +346,9 @@ local function loadBirdModels()
     end
 end
 
---============================================
+
 -- CHARACTER HIDING SYSTEM
---============================================
+
 
 -- Tracks which players have hidden character meshes
 local HiddenCharacters = {}
@@ -581,9 +581,9 @@ local function updateMorphVisibility(player, visible)
     end
 end
 
---============================================
+
 -- VFX ASSET LOADING
---============================================
+
 
 local BirdVFX = ReplicatedStorage:WaitForChild("BirdVFX", 5)
 local PenguinVFX = BirdVFX and BirdVFX:WaitForChild("Penguin", 5)
@@ -602,9 +602,9 @@ local SERVER_VFX = {
     }
 }
 
---============================================
+
 -- PLAYER DATA MANAGEMENT
---============================================
+
 
 -- Core player state storage
 local PlayerData = {}
@@ -715,9 +715,9 @@ local function getPlayerTeam(player)
     return data.team
 end
 
---============================================
+
 -- SPAWN PROTECTION SYSTEM
---============================================
+
 
 --[[
     Grants temporary invulnerability to player
@@ -764,9 +764,9 @@ end
 -- Export for external scripts
 _G.GiveSpawnProtection = giveSpawnProtection
 
---============================================
+
 -- COMBAT VALIDATION FUNCTIONS
---============================================
+
 
 --[[
     Validates if player is allowed to perform attacks
@@ -943,9 +943,9 @@ local function syncHpToHumanoid(player)
     humanoid.Health = data.hp
 end
 
---============================================
+
 -- INVISIBILITY SYSTEM
---============================================
+
 
 --[[
     Forces player out of invisibility with reason notification
@@ -1008,9 +1008,9 @@ _G.IsPlayerInvisible = function(player)
     return true
 end
 
---============================================
+
 -- STUN SYSTEM
---============================================
+
 
 --[[
     Applies stun effect to player (movement disabled)
@@ -1137,9 +1137,9 @@ local function stunPlayer(player, duration)
     end)
 end
 
---============================================
+
 -- SLOW SYSTEM
---============================================
+
 
 --[[
     Applies slow effect reducing movement speed
@@ -1264,9 +1264,9 @@ end
 _G.StunPlayer = stunPlayer
 _G.SlowPlayer = slowPlayer
 
---============================================
+
 -- HEAL SYSTEM
---============================================
+
 
 -- Global heal function for external use
 _G.HealPlayerHP = function(player, amount)
@@ -1288,9 +1288,9 @@ _G.HealPlayerHP = function(player, amount)
     return actualHeal
 end
 
---============================================
+
 -- DAMAGE SYSTEM
---============================================
+
 
 --[[
     Checks for decoy clones in radius and damages them
@@ -1518,9 +1518,9 @@ local function getEnemiesInRadius(attacker, position, radius)
     return found
 end
 
---============================================
+
 -- BIRD SELECTION HANDLER
---============================================
+
 
 SelectBird.OnServerEvent:Connect(function(player, birdType)
     if not BIRD_TYPES[birdType] then return end
@@ -1585,9 +1585,9 @@ SelectBird.OnServerEvent:Connect(function(player, birdType)
     end
 end)
 
---============================================
+
 -- ATTACK HANDLER
---============================================
+
 
 --[[
     Processes attack requests from clients
@@ -2012,9 +2012,9 @@ Attack.OnServerEvent:Connect(function(player, direction, birdType, clientPos)
     end
 end)
 
---============================================
+
 -- ABILITY HANDLER
---============================================
+
 
 --[[
     Processes special ability requests from clients
@@ -2734,9 +2734,9 @@ UseAbility.OnServerEvent:Connect(function(player, abilityType, ...)
     end
 end)
 
---============================================
+
 -- TEAM MANAGEMENT
---============================================
+
 
 --[[
     Sets player's team and triggers morph if conditions met
@@ -2833,9 +2833,9 @@ _G.SetInvincibility = function(player, value)
     end
 end
 
---============================================
+
 -- HP REGENERATION LOOP
---============================================
+
 
 -- Background task for passive HP regeneration
 task.spawn(function()
@@ -2862,9 +2862,9 @@ task.spawn(function()
     end
 end)
 
---============================================
+
 -- CHARACTER HIDING ENFORCEMENT LOOP
---============================================
+
 
 -- Periodic enforcement to prevent other scripts from revealing character
 task.spawn(function()
@@ -2879,9 +2879,9 @@ task.spawn(function()
     end
 end)
 
---============================================
+
 -- PLAYER LIFECYCLE EVENTS
---============================================
+
 
 Players.PlayerRemoving:Connect(function(player)
     PlayerFirstKill[player] = nil
@@ -3064,9 +3064,9 @@ for _, player in ipairs(Players:GetPlayers()) do
     end
 end
 
---============================================
+
 -- INITIALIZATION
---============================================
+
 
 -- Load bird models on startup
 task.spawn(function()
@@ -3074,9 +3074,9 @@ task.spawn(function()
     loadBirdModels()
 end)
 
---============================================
+
 -- TELEPORT INTEGRATION
---============================================
+
 
 --[[
     Applies morph after player teleported to arena
@@ -3122,9 +3122,9 @@ _G.GetPlayerSelectedBird = function(player)
     return data and data.birdType or "PIGEON"
 end
 
---============================================
+
 -- LOBBY INTEGRATION
---============================================
+
 
 _G.ApplyBirdMorphToPlayer = function(player)
     local char = player.Character
