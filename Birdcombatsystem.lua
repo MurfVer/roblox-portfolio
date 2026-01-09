@@ -1,6 +1,5 @@
 --[[
     BIRD COMBAT SYSTEM - Server Script
-    Version: 3.3
     
     A comprehensive combat system for a bird-themed multiplayer game featuring:
     - Character morphing system with CFrame-based attachment
