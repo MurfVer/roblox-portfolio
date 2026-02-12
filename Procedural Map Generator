@@ -1,0 +1,732 @@
+--[[
+	Procedural Map Generator
+	Generates terrain using perlin noise, places structures
+	
+	v3 - rewrote height calc, old version had issues with chunk borders
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local CONFIG = {
+	MAP_RADIUS = 40,
+	BLOCK_SIZE = 32,
+	START_HEIGHT = 10,
+	MIN_HEIGHT = 1,
+	MAX_HEIGHT = 20,
+
+	SMOOTH_FACTOR = 0.6,
+	NOISE_SCALE = 0.1,
+	NOISE_STRENGTH = 5,
+	MAX_HEIGHT_DIFF = 1,
+
+	MOUNTAIN_COUNT = 1,
+	MOUNTAIN_HEIGHT = 7,
+	MOUNTAIN_SIZE = 12,  -- in blocks, not studs
+	VALLEY_COUNT = 1,
+	VALLEY_DEPTH = 5,
+	VALLEY_SIZE = 4,
+
+	STRUCTURE_CHANCE = 0.75,
+	MIN_STRUCT_DIST = 1.5,
+	STRUCT_MIN_SCALE = 0.8,
+	STRUCT_MAX_SCALE = 3,
+
+	EDGE_STONE_MIN = 5,
+	EDGE_STONE_MAX = 15,
+	EDGE_CHANCE = 1,
+	EDGE_THRESHOLD = 0.92,
+
+	DEFAULT_CHANCE = 10,
+	DEFAULT_WEIGHT = 1,
+
+	UNIQUE_MIN_H = 8,
+	UNIQUE_MAX_H = 15,
+	UNIQUE_MIN_DIST = 10,
+	UNIQUE_MAX_DIST = 30,
+
+	YIELD_INTERVAL = 0.03,
+	DEBUG_MARKERS = true,  -- set false to hide mountain/valley markers
+}
+
+-- perlin noise with multiple octaves for varied terrain
+local NoiseGen = {}
+NoiseGen.__index = NoiseGen
+
+export type NoiseGenType = typeof(setmetatable({} :: {
+	ox: number, oz: number,
+	ot1: number, ot2: number, ot3: number,
+}, NoiseGen))
+
+function NoiseGen.new(): NoiseGenType
+	local self = setmetatable({}, NoiseGen)
+
+	-- offset range needs to be large enough that we dont get
+	-- similar patterns even with different seeds. 1e6 works fine,
+	-- tried 1e4 first but got noticeable repetition on big maps
+	local r = 1e6
+	self.ox = math.random() * r * 2 - r
+	self.oz = math.random() * r * 2 - r
+	self.ot1 = math.random() * r * 2 - r
+	self.ot2 = math.random() * r * 2 - r
+	self.ot3 = math.random() * r * 2 - r
+
+	return self
+end
+
+function NoiseGen.get(self: NoiseGenType, x: number, z: number): number
+	local nx = (x + self.ox) * CONFIG.NOISE_SCALE
+	local nz = (z + self.oz) * CONFIG.NOISE_SCALE
+
+	-- layered octaves: base + 2.5x freq + 5x freq
+	-- weights tuned to avoid overly spiky terrain
+	local n1 = math.noise(nx, nz, self.ot1)
+	local n2 = math.noise(nx * 2.5, nz * 2.5, self.ot2) * 0.4
+	local n3 = math.noise(nx * 5, nz * 5, self.ot3) * 0.2
+
+	return (n1 + n2 + n3) * CONFIG.NOISE_STRENGTH
+end
+
+
+local Terrain = {}
+Terrain.__index = Terrain
+
+export type TerrainType = typeof(setmetatable({} :: {
+	mountains: {{x: number, z: number}},
+	valleys: {{x: number, z: number}},
+}, Terrain))
+
+function Terrain.new(): TerrainType
+	local self = setmetatable({
+		mountains = {},
+		valleys = {},
+	}, Terrain)
+	return self
+end
+
+function Terrain.generate(self: TerrainType)
+	for i = 1, CONFIG.MOUNTAIN_COUNT do
+		local ang = (i - 1) * (2 * math.pi / CONFIG.MOUNTAIN_COUNT) + (math.random() - 0.5)
+		local dist = CONFIG.MAP_RADIUS * (0.25 + math.random() * 0.4)
+		local x = math.floor(math.cos(ang) * dist)
+		local z = math.floor(math.sin(ang) * dist)
+
+		-- squared comparison avoids sqrt
+		local radiusSq = CONFIG.MAP_RADIUS * CONFIG.MAP_RADIUS
+		if x*x + z*z <= radiusSq then
+			table.insert(self.mountains, {x = x, z = z})
+		end
+	end
+
+	for i = 1, CONFIG.VALLEY_COUNT do
+		local ang = (i - 0.5) * (2 * math.pi / CONFIG.VALLEY_COUNT) + (math.random() - 0.5) * 0.5
+		local dist = CONFIG.MAP_RADIUS * (0.3 + math.random() * 0.3)
+		local x = math.floor(math.cos(ang) * dist)
+		local z = math.floor(math.sin(ang) * dist)
+
+		if x*x + z*z <= CONFIG.MAP_RADIUS * CONFIG.MAP_RADIUS then
+			table.insert(self.valleys, {x = x, z = z})
+		end
+	end
+end
+
+function Terrain.getInfluence(self: TerrainType, x: number, z: number): number
+	local influence = 0
+
+	for _, m in ipairs(self.mountains) do
+		local d = math.sqrt((x - m.x)^2 + (z - m.z)^2)
+		if d < CONFIG.MOUNTAIN_SIZE then
+			local s = 1 - d / CONFIG.MOUNTAIN_SIZE
+			-- cubic gives smoother peaks than linear or quadratic
+			influence = influence + s*s*s * CONFIG.MOUNTAIN_HEIGHT
+		end
+	end
+
+	-- valleys use quadratic - sharper edges look better for low areas
+	for _, v in ipairs(self.valleys) do
+		local d = math.sqrt((x - v.x)^2 + (z - v.z)^2)
+		if d < CONFIG.VALLEY_SIZE then
+			local s = 1 - d / CONFIG.VALLEY_SIZE
+			influence = influence - s*s * CONFIG.VALLEY_DEPTH
+		end
+	end
+
+	return influence
+end
+
+
+export type StructData = {
+	model: Model | BasePart,
+	chance: number,
+	minH: number,
+	maxH: number,
+	weight: number,
+	name: string,
+}
+
+export type PlacedStruct = {
+	x: number, z: number,
+	name: string,
+	scale: number,
+	height: number,
+	isEdge: boolean,
+	isUnique: boolean?,
+}
+
+local Structs = {}
+Structs.__index = Structs
+
+export type StructsType = typeof(setmetatable({} :: {
+	folder: Folder?,
+	portal: Model?,
+	byHeight: {[number]: {StructData}},
+	placed: {PlacedStruct},
+	portalSpots: {{x: number, z: number, h: number}},
+	portalDone: boolean,
+}, Structs))
+
+function Structs.new(): StructsType
+	local self = setmetatable({
+		folder = nil,
+		portal = nil,
+		byHeight = {},
+		placed = {},
+		portalSpots = {},
+		portalDone = false,
+	}, Structs)
+	return self
+end
+
+function Structs.init(self: StructsType)
+	self.folder = ReplicatedStorage:FindFirstChild("RandomStructures")
+	self.portal = ReplicatedStorage:FindFirstChild("Portal")
+
+	if not self.folder then
+		warn("no RandomStructures folder")
+		return
+	end
+
+	-- wait a frame before loading, some models werent fully replicated
+	task.wait()
+	self:_loadStructures()
+end
+
+function Structs._loadStructures(self: StructsType)
+	for _, obj in pairs(self.folder:GetChildren()) do
+		if not (obj:IsA("Model") or obj:IsA("BasePart")) then continue end
+
+		local chance = obj:GetAttribute("SpawnChance") or CONFIG.DEFAULT_CHANCE
+		local minH = obj:GetAttribute("MinHeight") or CONFIG.MIN_HEIGHT
+		local maxH = obj:GetAttribute("MaxHeight") or CONFIG.MAX_HEIGHT
+		local weight = obj:GetAttribute("SpawnWeight") or CONFIG.DEFAULT_WEIGHT
+
+		-- TODO: maybe add validation warnings for bad attribute values
+		chance = math.clamp(chance, 0, 100)
+		minH = math.clamp(minH, CONFIG.MIN_HEIGHT, CONFIG.MAX_HEIGHT)
+		maxH = math.clamp(maxH, CONFIG.MIN_HEIGHT, CONFIG.MAX_HEIGHT)
+		if minH > maxH then minH, maxH = maxH, minH end  -- swap if backwards
+		weight = math.max(weight, 0.1)
+
+		local data: StructData = {
+			model = obj,
+			chance = chance,
+			minH = minH,
+			maxH = maxH,
+			weight = weight,
+			name = obj.Name,
+		}
+
+		-- index structures by every height they can spawn at
+		-- tried using range checks at spawn time but this lookup is faster
+		for h = minH, maxH do
+			if not self.byHeight[h] then self.byHeight[h] = {} end
+			table.insert(self.byHeight[h], data)
+		end
+	end
+end
+
+function Structs._pickWeighted(self: StructsType, list: {StructData}): StructData?
+	if #list == 0 then return nil end
+	if #list == 1 then return list[1] end
+
+	local total = 0
+	for _, s in ipairs(list) do total = total + s.weight end
+
+	-- this is basically roulette wheel selection
+	local roll = math.random() * total
+	local curr = 0
+	for _, s in ipairs(list) do
+		curr = curr + s.weight
+		if roll <= curr then return s end
+	end
+	return list[#list]  -- shouldnt hit this but just in case
+end
+
+function Structs._checkDist(self: StructsType, x: number, z: number, minDist: number): boolean
+	for _, p in ipairs(self.placed) do
+		local d = math.sqrt((x - p.x)^2 + (z - p.z)^2)
+		if d < minDist then return false end
+	end
+	return true
+end
+
+function Structs._scaleObj(self: StructsType, obj: Model | BasePart, scale: number)
+	if obj:IsA("BasePart") then
+		obj.Size = obj.Size * scale
+		obj.Anchored = true
+	else
+		local cf, _ = obj:GetBoundingBox()
+		for _, p in pairs(obj:GetDescendants()) do
+			if p:IsA("BasePart") then
+				p.Size = p.Size * scale
+				p.Position = cf.Position + (p.Position - cf.Position) * scale
+				p.Anchored = true
+
+				local mesh = p:FindFirstChildOfClass("SpecialMesh") or p:FindFirstChildOfClass("BlockMesh")
+				if mesh then mesh.Scale = mesh.Scale * scale end
+			end
+		end
+	end
+end
+
+function Structs._placeAt(self: StructsType, obj: Model | BasePart, wx: number, wz: number, blockTop: number)
+	local halfY
+	if obj:IsA("BasePart") then
+		halfY = obj.Size.Y / 2
+		obj.Position = Vector3.new(wx, blockTop + halfY, wz)
+		obj.CFrame = obj.CFrame * CFrame.Angles(0, math.rad(math.random(0, 360)), 0)
+	else
+		local _, size = obj:GetBoundingBox()
+		halfY = size.Y / 2
+		obj:PivotTo(CFrame.new(wx, blockTop + halfY, wz))
+		obj:PivotTo(obj:GetPivot() * CFrame.Angles(0, math.rad(math.random(0, 360)), 0))
+	end
+end
+
+function Structs.addPortalSpot(self: StructsType, x: number, z: number, h: number)
+	if self.portalDone or not self.portal then return end
+
+	if h < CONFIG.UNIQUE_MIN_H or h > CONFIG.UNIQUE_MAX_H then return end
+
+	local distC = math.sqrt(x*x + z*z)
+	if distC < CONFIG.UNIQUE_MIN_DIST or distC > CONFIG.UNIQUE_MAX_DIST then return end
+
+	if not self:_checkDist(x, z, CONFIG.MIN_STRUCT_DIST * 2) then return end
+
+	table.insert(self.portalSpots, {x = x, z = z, h = h})
+end
+
+function Structs.placePortal(self: StructsType, mapFolder: Folder, blocks: {[string]: {height: number, block: BasePart | Model}})
+	if self.portalDone or not self.portal or #self.portalSpots == 0 then return end
+
+	local spot = self.portalSpots[math.random(#self.portalSpots)]
+	local blockData = blocks[spot.x .. "," .. spot.z]
+	if not blockData then return end
+
+	local clone = self.portal:Clone()
+	local wx = spot.x * CONFIG.BLOCK_SIZE
+	local wz = spot.z * CONFIG.BLOCK_SIZE
+
+	local blockTop
+	if blockData.block:IsA("BasePart") then
+		blockTop = blockData.block.Position.Y + blockData.block.Size.Y/2
+	else
+		local cf, size = blockData.block:GetBoundingBox()
+		blockTop = cf.Position.Y + size.Y/2
+	end
+
+	self:_placeAt(clone, wx, wz, blockTop)
+	clone.Parent = mapFolder
+
+	self.portalDone = true
+	table.insert(self.placed, {
+		x = spot.x, z = spot.z,
+		name = "Portal", scale = 1,
+		height = spot.h, isEdge = false, isUnique = true
+	})
+	print("portal at " .. spot.x .. "," .. spot.z)
+end
+
+function Structs.tryPlace(self: StructsType, x: number, z: number, block: BasePart | Model, h: number, mapFolder: Folder)
+	if not self.folder then return end
+
+	local distC = math.sqrt(x*x + z*z)
+	local isEdge = distC >= CONFIG.MAP_RADIUS * CONFIG.EDGE_THRESHOLD
+
+	if isEdge then
+		self:_placeEdge(x, z, block, h, mapFolder)
+		return
+	end
+
+	if math.random() > CONFIG.STRUCTURE_CHANCE then return end
+	if not self:_checkDist(x, z, CONFIG.MIN_STRUCT_DIST) then return end
+
+	local available = self.byHeight[h]
+	if not available or #available == 0 then return end
+
+	local candidates = {}
+	for _, s in ipairs(available) do
+		if math.random(1, 100) <= s.chance then
+			table.insert(candidates, s)
+		end
+	end
+	if #candidates == 0 then return end
+
+	local picked = self:_pickWeighted(candidates)
+	if not picked then return end
+
+	local clone = picked.model:Clone()
+	local scale = CONFIG.STRUCT_MIN_SCALE + math.random() * (CONFIG.STRUCT_MAX_SCALE - CONFIG.STRUCT_MIN_SCALE)
+
+	local wx, wz = x * CONFIG.BLOCK_SIZE, z * CONFIG.BLOCK_SIZE
+	local blockTop
+	if block:IsA("BasePart") then
+		blockTop = block.Position.Y + block.Size.Y/2
+	else
+		local cf, size = block:GetBoundingBox()
+		blockTop = cf.Position.Y + size.Y/2
+	end
+
+	self:_scaleObj(clone, scale)
+	self:_placeAt(clone, wx, wz, blockTop)
+	clone.Parent = mapFolder
+
+	table.insert(self.placed, {
+		x = x, z = z,
+		name = picked.name, scale = scale,
+		height = h, isEdge = false
+	})
+end
+
+function Structs._placeEdge(self: StructsType, x: number, z: number, block: BasePart | Model, h: number, mapFolder: Folder)
+	if math.random() > CONFIG.EDGE_CHANCE then return end
+
+	local clif = self.folder:FindFirstChild("Clif")
+	if not clif then return end
+	if not self:_checkDist(x, z, 1.5) then return end
+
+	local clone = clif:Clone()
+	local scale = CONFIG.EDGE_STONE_MIN + math.random() * (CONFIG.EDGE_STONE_MAX - CONFIG.EDGE_STONE_MIN)
+
+	local wx, wz = x * CONFIG.BLOCK_SIZE, z * CONFIG.BLOCK_SIZE
+	local blockTop
+	if block:IsA("BasePart") then
+		blockTop = block.Position.Y + block.Size.Y/2
+	else
+		local cf, size = block:GetBoundingBox()
+		blockTop = cf.Position.Y + size.Y/2
+	end
+
+	self:_scaleObj(clone, scale)
+	self:_placeAt(clone, wx, wz, blockTop)
+	clone.Parent = mapFolder
+
+	table.insert(self.placed, {
+		x = x, z = z, name = "Clif",
+		scale = scale, height = h, isEdge = true
+	})
+end
+
+function Structs.getStats(self: StructsType): string
+	local edge, unique, regular = 0, 0, 0
+	local byName = {}
+
+	for _, p in ipairs(self.placed) do
+		if p.isEdge then edge = edge + 1
+		elseif p.isUnique then unique = unique + 1
+		else
+			regular = regular + 1
+			byName[p.name] = (byName[p.name] or 0) + 1
+		end
+	end
+
+	local out = "Structures: " .. #self.placed .. " total\n"
+	out = out .. "  edge: " .. edge .. ", unique: " .. unique .. ", regular: " .. regular
+
+	for name, cnt in pairs(byName) do
+		out = out .. "\n  " .. name .. ": " .. cnt
+	end
+	return out
+end
+
+
+local MapGen = {}
+MapGen.__index = MapGen
+
+export type MapGenType = typeof(setmetatable({} :: {
+	noise: NoiseGenType,
+	terrain: TerrainType,
+	structs: StructsType,
+	groundsFolder: Folder?,
+	mapFolder: Folder?,
+	blocks: {[string]: {height: number, block: BasePart | Model}},
+	heightStats: {[number]: number},
+	count: number,
+}, MapGen))
+
+function MapGen.new(): MapGenType
+	local self = setmetatable({
+		noise = NoiseGen.new(),
+		terrain = Terrain.new(),
+		structs = Structs.new(),
+		groundsFolder = nil :: Folder?,
+		mapFolder = nil :: Folder?,
+		blocks = {},
+		heightStats = {},
+		count = 0,
+	}, MapGen)
+	return self
+end
+
+function MapGen.init(self: MapGenType)
+	self.groundsFolder = ReplicatedStorage:WaitForChild("Grounds", 5)
+	assert(self.groundsFolder, "Grounds folder not found!")
+
+	-- cleanup old map
+	local old = workspace:FindFirstChild("GeneratedMap")
+	if old then old:Destroy() end
+
+	self.mapFolder = Instance.new("Folder")
+	self.mapFolder.Name = "GeneratedMap"
+	self.mapFolder.Parent = workspace
+
+	-- check how many ground blocks we have
+	local found = 0
+	for i = 1, 20 do
+		if self.groundsFolder:FindFirstChild("ground_" .. i) then
+			found = found + 1
+		end
+	end
+	print("found " .. found .. " ground blocks")
+
+	if found < 20 then
+		CONFIG.MAX_HEIGHT = found
+		CONFIG.START_HEIGHT = math.floor(found / 2)
+	end
+
+	self.structs:init()
+	self.terrain:generate()
+
+	self.blocks = {}
+	self.heightStats = {}
+	self.count = 0
+	for i = CONFIG.MIN_HEIGHT, CONFIG.MAX_HEIGHT do
+		self.heightStats[i] = 0
+	end
+end
+
+function MapGen._getGround(self: MapGenType, h: number): (BasePart | Model)?
+	h = math.clamp(h, CONFIG.MIN_HEIGHT, CONFIG.MAX_HEIGHT)
+	local b = self.groundsFolder:FindFirstChild("ground_" .. h)
+	if b then return b end
+
+	-- fallback to lower
+	for i = h - 1, CONFIG.MIN_HEIGHT, -1 do
+		b = self.groundsFolder:FindFirstChild("ground_" .. i)
+		if b then return b end
+	end
+	return self.groundsFolder:FindFirstChild("ground_1")
+end
+
+function MapGen._inBounds(self: MapGenType, x: number, z: number): boolean
+	return x*x + z*z <= CONFIG.MAP_RADIUS * CONFIG.MAP_RADIUS
+end
+
+function MapGen._getH(self: MapGenType, x: number, z: number): number?
+	local d = self.blocks[x .. "," .. z]
+	return d and d.height
+end
+
+function MapGen._calcHeight(self: MapGenType, x: number, z: number): number
+	if x == 0 and z == 0 then return CONFIG.START_HEIGHT end
+
+	local neighbors = {{x-1,z}, {x+1,z}, {x,z-1}, {x,z+1}}
+	local total, cnt = 0, 0
+	local nHeights = {}
+
+	for _, pos in ipairs(neighbors) do
+		local h = self:_getH(pos[1], pos[2])
+		if h then
+			table.insert(nHeights, h)
+			total = total + h
+			cnt = cnt + 1
+		end
+	end
+
+	if cnt == 0 then return CONFIG.START_HEIGHT end
+
+	local avg = total / cnt
+	local noiseVal = self.noise:get(x, z)
+	local terrainVal = self.terrain:getInfluence(x, z)
+
+	-- blend neighbor average with noise. higher smooth = more influence from neighbors
+	local target = avg * CONFIG.SMOOTH_FACTOR + (avg + noiseVal + terrainVal) * (1 - CONFIG.SMOOTH_FACTOR)
+	target = target + (math.random() - 0.5) * 1.2
+
+	-- gradual dropoff near map edge prevents harsh cutoff
+	local distC = math.sqrt(x*x + z*z) / CONFIG.MAP_RADIUS
+	if distC > 0.75 then
+		target = target - (distC - 0.75) * 8
+	end
+
+	local final = math.floor(target + 0.5)
+
+	for _, nh in ipairs(nHeights) do
+		if math.abs(final - nh) > CONFIG.MAX_HEIGHT_DIFF then
+			final = nh + (final > nh and 1 or -1) * CONFIG.MAX_HEIGHT_DIFF
+		end
+	end
+
+	return math.clamp(final, CONFIG.MIN_HEIGHT, CONFIG.MAX_HEIGHT)
+end
+
+function MapGen._placeBlock(self: MapGenType, x: number, z: number, h: number)
+	local template = self:_getGround(h)
+	if not template then return end
+
+	local clone = template:Clone()
+	local wx = x * CONFIG.BLOCK_SIZE
+	local wz = z * CONFIG.BLOCK_SIZE
+	local wy
+
+	if clone:IsA("BasePart") then
+		wy = clone.Size.Y / 2
+		clone.Position = Vector3.new(wx, wy, wz)
+		clone.Anchored = true
+	else
+		-- GetBoundingBox can error on empty models, wrap it
+		local ok, size = pcall(function()
+			local _, s = clone:GetBoundingBox()
+			return s
+		end)
+		if not ok or not size then
+			clone:Destroy()
+			return
+		end
+		wy = size.Y / 2
+		clone:PivotTo(CFrame.new(wx, wy, wz))
+		for _, p in pairs(clone:GetDescendants()) do
+			if p:IsA("BasePart") then p.Anchored = true end
+		end
+	end
+
+	clone.Parent = self.mapFolder
+
+	self.blocks[x .. "," .. z] = {height = h, block = clone}
+	self.heightStats[h] = self.heightStats[h] + 1
+	self.count = self.count + 1
+
+	self.structs:addPortalSpot(x, z, h)
+	self.structs:tryPlace(x, z, clone, h, self.mapFolder)
+end
+
+function MapGen.generate(self: MapGenType)
+	print("generating map...")
+	local t0 = os.clock()
+	local lastYield = t0
+	local lastLog = 0
+
+	-- BFS from center guarantees neighbors exist when we calc height
+	-- tried spiral pattern first but had edge artifacts
+	local queue = {{0, 0}}
+	local visited = {["0,0"] = true}
+	local queueStart = 1
+
+	while queueStart <= #queue do
+		local pos = queue[queueStart]
+		queueStart = queueStart + 1
+		local x, z = pos[1], pos[2]
+
+		if self:_inBounds(x, z) then
+			local h = self:_calcHeight(x, z)
+			self:_placeBlock(x, z, h)
+
+			if self.count - lastLog >= 1000 then
+				lastLog = self.count
+				print(self.count .. " blocks...")
+			end
+
+			if os.clock() - lastYield > CONFIG.YIELD_INTERVAL then
+				RunService.Heartbeat:Wait()
+				lastYield = os.clock()
+			end
+
+			for _, n in ipairs({{x-1,z}, {x+1,z}, {x,z-1}, {x,z+1}}) do
+				local key = n[1] .. "," .. n[2]
+				if not visited[key] and self:_inBounds(n[1], n[2]) then
+					visited[key] = true
+					table.insert(queue, n)
+				end
+			end
+		end
+	end
+
+	self.structs:placePortal(self.mapFolder, self.blocks)
+
+	local elapsed = os.clock() - t0
+	print(string.format("done! %d blocks in %.1fs", self.count, elapsed))
+
+	-- height range
+	local minH, maxH = CONFIG.MAX_HEIGHT, CONFIG.MIN_HEIGHT
+	for h = CONFIG.MIN_HEIGHT, CONFIG.MAX_HEIGHT do
+		if self.heightStats[h] > 0 then
+			minH = math.min(minH, h)
+			maxH = math.max(maxH, h)
+		end
+	end
+	print("heights: " .. minH .. "-" .. maxH)
+	print(self.structs:getStats())
+
+	self:_createSpawn()
+	self:_addMarkers()
+end
+
+function MapGen._createSpawn(self: MapGenType)
+	local sp = Instance.new("SpawnLocation")
+	sp.Position = Vector3.new(0, 150, 0)
+	sp.Size = Vector3.new(15, 1, 15)
+	sp.Anchored = true
+	sp.Material = Enum.Material.Neon
+	sp.BrickColor = BrickColor.new("Lime green")
+	sp.Parent = workspace
+end
+
+function MapGen._addMarkers(self: MapGenType)
+	if not CONFIG.DEBUG_MARKERS then return end
+
+	for i, m in ipairs(self.terrain.mountains) do
+		local p = Instance.new("Part")
+		p.Name = "Mountain" .. i
+		p.Size = Vector3.new(20, 200, 20)
+		p.Position = Vector3.new(m.x * CONFIG.BLOCK_SIZE, 100, m.z * CONFIG.BLOCK_SIZE)
+		p.BrickColor = BrickColor.new("Brown")
+		p.Material = Enum.Material.Rock
+		p.Transparency = 0.5
+		p.CanCollide = false
+		p.Anchored = true
+		p.Parent = self.mapFolder
+	end
+
+	for i, v in ipairs(self.terrain.valleys) do
+		local p = Instance.new("Part")
+		p.Name = "Valley" .. i
+		p.Size = Vector3.new(25, 25, 25)
+		p.Position = Vector3.new(v.x * CONFIG.BLOCK_SIZE, 15, v.z * CONFIG.BLOCK_SIZE)
+		p.BrickColor = BrickColor.new("Deep blue")
+		p.Material = Enum.Material.ForceField
+		p.Transparency = 0.4
+		p.CanCollide = false
+		p.Anchored = true
+		p.Parent = self.mapFolder
+	end
+end
+
+
+-- entry point
+math.randomseed(os.clock() * 1000)
+-- first few random() calls can be predictable on some systems
+for _ = 1, 10 do math.random() end
+
+local gen = MapGen.new()
+gen:init()
+gen:generate()
